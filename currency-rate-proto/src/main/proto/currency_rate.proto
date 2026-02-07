@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+option java_multiple_files = true;
+option java_package = "org.example.currencyrate.grpc";
+
+package currencyrate;
+
+service CurrencyRateService {
+  rpc GetRate (RateRequest) returns (RateResponse);
+}
+
+message RateRequest {}
+
+message RateResponse {
+  string pair = 1;
+  double rate = 2;
+}
