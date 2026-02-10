@@ -23,6 +23,10 @@
             <artifactId>currency-rate-proto</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-zookeeper-discovery</artifactId>
+        </dependency>
     </dependencies>
 
     <build>
