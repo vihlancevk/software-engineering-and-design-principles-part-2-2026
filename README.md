@@ -1,21 +1,32 @@
 # Currency Rate Service
 
-A microservices demo built with Spring Boot and gRPC, demonstrating service discovery (Zookeeper) and consumer-driven contract testing (Pact).
+A microservices demo built with Spring Boot and gRPC, demonstrating service discovery (Zookeeper), consumer-driven contract testing (Pact), and observability (Micrometer + Prometheus + Grafana).
 
 ## Architecture
 
 ```
-┌─────────────────┐        gRPC GetRate()        ┌──────────────────────────┐
-│   rate-printer  │ ────────────────────────────► │  currency-rate-provider  │
-│   (consumer)    │ ◄──── {pair, rate} ─────────  │      (provider)          │
-└─────────────────┘                               └──────────────────────────┘
-        │                                                      │
-        │  publishes pact                        verifies pact │
-        ▼                                                      ▼
-┌──────────────────────────────────────────────────────────────────────────┐
-│                            Pact Broker :9292                             │
-└──────────────────────────────────────────────────────────────────────────┘
-        Both services register/discover via Zookeeper :2181
+┌─────────────────┐   x-client-name header   ┌──────────────────────────┐
+│   rate-printer  │  ──── gRPC GetRate() ───►│  currency-rate-provider  │
+│   (client)      │  ◄─── {pair, rate} ──────│  (service1 / service2)   │
+└─────────────────┘                          └──────────────────────────┘
+        │                                                  │
+        │  publishes pact                    verifies pact │
+        ▼                                                  ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                         Pact Broker :9292                            │
+└──────────────────────────────────────────────────────────────────────┘
+        All services register / discover via Zookeeper :2181
+
+┌─────────────┐   scrape /actuator/prometheus   ┌──────────────────┐
+│  Prometheus │ ◄────────────────────────────── │ service1/2,client│
+│   :9091     │ ◄──── JMX exporter :7070 ─────  │ zookeeper        │
+└──────┬──────┘                                 └──────────────────┘
+       │  datasource
+       ▼
+┌─────────────┐
+│   Grafana   │  http://localhost:3000
+│   :3000     │
+└─────────────┘
 ```
 
 ## Modules
@@ -23,8 +34,8 @@ A microservices demo built with Spring Boot and gRPC, demonstrating service disc
 | Module | Description |
 |--------|-------------|
 | `currency-rate-proto` | Protobuf definitions for the `CurrencyRateService` gRPC API |
-| `currency-rate-provider` | gRPC server — returns a random USD/RUB exchange rate |
-| `rate-printer` | gRPC client — fetches and prints the rate every 5 seconds |
+| `currency-rate-provider` | gRPC server — returns a random USD/RUB exchange rate; exposes Micrometer metrics |
+| `rate-printer` | gRPC client — fetches and prints the rate every 5 s; injects client identity into gRPC metadata |
 
 ### gRPC API (`currency_rate.proto`)
 
@@ -43,21 +54,44 @@ message RateResponse {
 
 ## Requirements
 
-- Java 25
+- Java 21+
 - Maven 3.9+
 - Docker & Docker Compose
 
 ## Running
 
-**Start infrastructure:**
+### 1. Build JARs
+
 ```bash
-docker compose up -d
+mvn package -DskipTests
 ```
 
-This starts:
-- **Zookeeper** on port `2181` — service discovery
-- **Pact Broker** on port `9292` — contract storage (`http://localhost:9292`)
-- **PostgreSQL** — backing store for the Pact Broker
+> `-DskipTests` also skips Pact publishing so no running broker is required for a plain build.
+
+### 2. Start all services
+
+```bash
+docker compose up --build
+```
+
+| Service | URL | Description |
+|---------|-----|-------------|
+| service1 (provider) | http://localhost:8080/actuator | gRPC server instance 1 |
+| service2 (provider) | http://localhost:8082/actuator | gRPC server instance 2 |
+| client (rate-printer) | http://localhost:8081/actuator | gRPC client |
+| Zookeeper | localhost:2181 | service discovery |
+| Prometheus | http://localhost:9091 | metrics storage |
+| Grafana | http://localhost:3000 | dashboards (admin / admin) |
+| Pact Broker | http://localhost:9292 | contract storage |
+
+> service1 and service2 both register as `currency-rate-provider` in Zookeeper so the client discovers both automatically and load-balances between them.
+
+### 3. Running services locally (without Docker)
+
+**Start infrastructure only:**
+```bash
+docker compose up -d zookeeper prometheus grafana
+```
 
 **Start the provider:**
 ```bash
@@ -71,6 +105,78 @@ cd rate-printer
 mvn spring-boot:run
 ```
 
+## Observability
+
+### Spring Actuator + Micrometer
+
+Both `currency-rate-provider` and `rate-printer` have `spring-boot-starter-actuator` and `micrometer-registry-prometheus`. Prometheus metrics are exposed at `/actuator/prometheus`.
+
+All metrics from each instance are tagged with `application=<service-label>` (controlled by the `METRICS_APPLICATION` environment variable), which is used as the primary filter in Grafana dashboards.
+
+### Custom gRPC Metrics (server side)
+
+`MetricsServerInterceptor` is a `@GrpcGlobalServerInterceptor` that wraps every server call and records:
+
+| Metric | Type | Tags | Description |
+|--------|------|------|-------------|
+| `grpc.server.request.duration` | Timer | `method`, `client`, `status` | Request processing time. Histogram buckets are enabled, allowing `histogram_quantile()` in Prometheus for any percentile. |
+| `grpc.server.errors` | Counter | `method`, `client`, `status` | Incremented for every non-OK gRPC response (HTTP-500 equivalent). |
+
+The `client` tag is populated from the `x-client-name` gRPC metadata header injected by `ClientNameInterceptor` on the client side.
+
+### Zookeeper JVM Metrics
+
+`monitoring/zookeeper/Dockerfile` extends `zookeeper:3.8` with the [JMX Prometheus Java agent](https://github.com/prometheus/jmx_exporter), which exposes Zookeeper's JVM metrics (heap, GC, threads, CPU) on port `7070`.
+
+### Prometheus
+
+`prometheus/prometheus.yml` scrapes:
+
+| Job | Target | Path |
+|-----|--------|------|
+| `service1` | `service1:8080` | `/actuator/prometheus` |
+| `service2` | `service2:8080` | `/actuator/prometheus` |
+| `client` | `client:8081` | `/actuator/prometheus` |
+| `zookeeper` | `zookeeper:7070` | `/metrics` (JMX exporter) |
+
+### Grafana Dashboards
+
+Dashboards are auto-provisioned from `grafana/dashboards/` on startup.
+
+#### JVM (Micrometer) — All Services
+
+Displays JVM metrics for **service1**, **service2**, and **client** (Micrometer format) plus a dedicated **ZooKeeper** row (JMX exporter format).
+
+Panels:
+- Heap & non-heap memory (used / max / committed)
+- GC pause rate and memory allocation rate
+- Live and daemon thread counts
+- Process and system CPU usage
+- Loaded class count
+- ZooKeeper: heap memory, threads, CPU, connections, request latency, GC rate
+
+Template variables: **Application** (multi-select), **Instance**.
+
+#### gRPC Server Metrics
+
+Displays the three required server-side metric groups:
+
+**(a) Requests per second broken down by client**
+- Time series of `rate(grpc_server_request_duration_seconds_count[…]) by (application, client)`
+- Stat panel showing total RPS
+
+**(b) Number of 500 errors**
+- Error rate per second by client and gRPC status code
+- Cumulative error increase panel
+- Stat panel showing all-time error count
+
+**(c) Request processing time**
+- Average: `rate(…_sum) / rate(…_count)`
+- Median (P50), P75, P95, P99: `histogram_quantile(q, rate(…_bucket[…]))`
+- Combined comparison panel showing all percentiles on one chart
+
+Template variable: **Application** (multi-select, defaults to all).
+
 ## Contract Testing (Pact)
 
 Consumer-driven contract testing is implemented with [Pact JVM](https://docs.pact.io/) v4.6.
@@ -78,7 +184,7 @@ Consumer-driven contract testing is implemented with [Pact JVM](https://docs.pac
 ### How it works
 
 1. **Consumer** (`rate-printer`) defines the expected contract in `CurrencyRateConsumerPactTest` — a synchronous message interaction where an empty request yields a response with `pair` (string) and `rate` (decimal).
-2. The pact file is generated in `target/pacts/` during `mvn test` and **published to the Pact Broker** automatically on `mvn package`.
+2. The pact file is generated in `target/pacts/` during `mvn test` and **published to the Pact Broker** automatically on `mvn package` (skipped when `-DskipTests` is set).
 3. **Provider** (`currency-rate-provider`) fetches all consumer contracts from the broker and verifies them during `mvn verify` via `CurrencyRatePactProviderIT`.
 
 ### Running contract tests
@@ -89,10 +195,13 @@ mvn verify
 
 # Override broker URL (e.g. in CI)
 mvn verify -Dpact.broker.url=http://pact-broker:9292
+
+# Skip Pact publishing only (tests still run)
+mvn verify -DskipPactPublish=true
 ```
 
 The root POM builds modules in order (`currency-rate-proto` → `rate-printer` → `currency-rate-provider`) so the pact is always published before verification runs.
 
 ### Viewing contracts
 
-Open the Pact Broker UI at **http://localhost:9292** after running the build.
+Open the Pact Broker UI at **http://localhost:9292** after starting the infrastructure.

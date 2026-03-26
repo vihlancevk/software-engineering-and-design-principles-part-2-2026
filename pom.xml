@@ -40,6 +40,9 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <pact.version>4.6.17</pact.version>
         <pact.broker.url>http://localhost:9292</pact.broker.url>
+        <!-- skipPactPublish defaults to skipTests so that -DskipTests also skips
+             Pact Broker publishing (which requires the broker to be running). -->
+        <skipPactPublish>${skipTests}</skipPactPublish>
     </properties>
 
 </project>
