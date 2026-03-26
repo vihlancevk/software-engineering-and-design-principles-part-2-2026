@@ -1,9 +1,108 @@
 services:
+  # ─────────────────────────────────────────────────────────────
+  # Service discovery
+  # ─────────────────────────────────────────────────────────────
   zookeeper:
-    image: zookeeper:3.8
+    build:
+      context: ./monitoring/zookeeper
     ports:
       - "2181:2181"
+      - "7070:7070"       # JMX Prometheus exporter
+    environment:
+      ZOO_4LW_COMMANDS_WHITELIST: mntr,conf,ruok
+    healthcheck:
+      test: ["CMD-SHELL", "echo ruok | nc -w 2 localhost 2181 | grep imok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
+  # ─────────────────────────────────────────────────────────────
+  # gRPC currency-rate server — two instances (service1, service2)
+  # Both register as "currency-rate-provider" in ZooKeeper so the
+  # client discovers them via round-robin. Metrics are tagged with
+  # METRICS_APPLICATION to distinguish them in Grafana.
+  # ─────────────────────────────────────────────────────────────
+  service1:
+    build: ./currency-rate-provider
+    ports:
+      - "8081:8080"       # Spring Actuator / Prometheus metrics
+      - "9090:9090"       # gRPC
+    environment:
+      ZOOKEEPER_HOST: zookeeper
+      METRICS_APPLICATION: service1
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+
+  service2:
+    build: ./currency-rate-provider
+    ports:
+      - "8082:8080"       # Spring Actuator / Prometheus metrics
+      - "9092:9090"       # gRPC
+    environment:
+      ZOOKEEPER_HOST: zookeeper
+      METRICS_APPLICATION: service2
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+
+  # ─────────────────────────────────────────────────────────────
+  # gRPC client — scheduled rate printer
+  # ─────────────────────────────────────────────────────────────
+  client:
+    build: ./rate-printer
+    ports:
+      - "8083:8081"       # Spring Actuator / Prometheus metrics
+    environment:
+      ZOOKEEPER_HOST: zookeeper
+      METRICS_APPLICATION: client
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+      service1:
+        condition: service_started
+      service2:
+        condition: service_started
+
+  # ─────────────────────────────────────────────────────────────
+  # Metrics collection
+  # ─────────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9091:9090"       # UI at http://localhost:9091
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    depends_on:
+      - service1
+      - service2
+      - client
+
+  # ─────────────────────────────────────────────────────────────
+  # Dashboards
+  # ─────────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"       # UI at http://localhost:3000  (admin/admin)
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
+  # ─────────────────────────────────────────────────────────────
+  # Contract testing infrastructure (unchanged)
+  # ─────────────────────────────────────────────────────────────
   pact-broker-db:
     image: postgres:16-alpine
     environment:
@@ -26,3 +125,6 @@ services:
     environment:
       PACT_BROKER_DATABASE_URL: postgres://pact_broker:pact_broker@pact-broker-db/pact_broker
       PACT_BROKER_LOG_LEVEL: INFO
+
+volumes:
+  grafana_data:

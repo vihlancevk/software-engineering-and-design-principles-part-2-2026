@@ -1,0 +1,34 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # currency-rate-provider instance 1 (service1)
+  - job_name: 'service1'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['service1:8080']
+
+  # currency-rate-provider instance 2 (service2)
+  - job_name: 'service2'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['service2:8080']
+
+  # rate-printer (gRPC client)
+  - job_name: 'client'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['client:8081']
+
+  # ZooKeeper JVM metrics via JMX Prometheus Java agent
+  - job_name: 'zookeeper'
+    static_configs:
+      - targets: ['zookeeper:7070']
+        labels:
+          application: 'zookeeper'
+
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

@@ -1,0 +1,118 @@
+---
+# JMX Prometheus Java Agent configuration for ZooKeeper.
+# Exposes standard JVM metrics (memory, GC, threads, CPU, classes) on port 7070.
+startDelaySeconds: 0
+ssl: false
+lowercaseOutputName: true
+lowercaseOutputLabelNames: true
+
+rules:
+  # ---------- JVM Heap Memory ----------
+  - pattern: 'java.lang<type=Memory><HeapMemoryUsage>used'
+    name: jvm_memory_heap_used_bytes
+    type: GAUGE
+    help: "JVM heap memory used (bytes)"
+
+  - pattern: 'java.lang<type=Memory><HeapMemoryUsage>max'
+    name: jvm_memory_heap_max_bytes
+    type: GAUGE
+    help: "JVM heap memory max (bytes)"
+
+  - pattern: 'java.lang<type=Memory><HeapMemoryUsage>committed'
+    name: jvm_memory_heap_committed_bytes
+    type: GAUGE
+    help: "JVM heap memory committed (bytes)"
+
+  # ---------- JVM Non-Heap Memory ----------
+  - pattern: 'java.lang<type=Memory><NonHeapMemoryUsage>used'
+    name: jvm_memory_nonheap_used_bytes
+    type: GAUGE
+    help: "JVM non-heap memory used (bytes)"
+
+  - pattern: 'java.lang<type=Memory><NonHeapMemoryUsage>committed'
+    name: jvm_memory_nonheap_committed_bytes
+    type: GAUGE
+    help: "JVM non-heap memory committed (bytes)"
+
+  # ---------- Memory Pools ----------
+  - pattern: 'java.lang<type=MemoryPool, name=(.+)><Usage>used'
+    name: jvm_memory_pool_used_bytes
+    labels:
+      pool: "$1"
+    type: GAUGE
+    help: "JVM memory pool used (bytes)"
+
+  # ---------- Garbage Collection ----------
+  - pattern: 'java.lang<type=GarbageCollector, name=(.+)><CollectionCount>'
+    name: jvm_gc_collection_count_total
+    labels:
+      gc: "$1"
+    type: COUNTER
+    help: "Total number of GC collections"
+
+  - pattern: 'java.lang<type=GarbageCollector, name=(.+)><CollectionTime>'
+    name: jvm_gc_collection_time_ms_total
+    labels:
+      gc: "$1"
+    type: COUNTER
+    help: "Total GC collection time (ms)"
+
+  # ---------- Threads ----------
+  - pattern: 'java.lang<type=Threading><ThreadCount>'
+    name: jvm_threads_current
+    type: GAUGE
+    help: "Current thread count"
+
+  - pattern: 'java.lang<type=Threading><DaemonThreadCount>'
+    name: jvm_threads_daemon
+    type: GAUGE
+    help: "Daemon thread count"
+
+  - pattern: 'java.lang<type=Threading><PeakThreadCount>'
+    name: jvm_threads_peak
+    type: GAUGE
+    help: "Peak thread count"
+
+  # ---------- CPU ----------
+  - pattern: 'java.lang<type=OperatingSystem><ProcessCpuLoad>'
+    name: jvm_process_cpu_usage
+    type: GAUGE
+    help: "Process CPU usage (0.0-1.0)"
+
+  - pattern: 'java.lang<type=OperatingSystem><SystemCpuLoad>'
+    name: jvm_system_cpu_usage
+    type: GAUGE
+    help: "System CPU usage (0.0-1.0)"
+
+  # ---------- Class Loading ----------
+  - pattern: 'java.lang<type=ClassLoading><LoadedClassCount>'
+    name: jvm_classes_loaded
+    type: GAUGE
+    help: "Number of loaded classes"
+
+  - pattern: 'java.lang<type=ClassLoading><TotalLoadedClassCount>'
+    name: jvm_classes_loaded_total
+    type: COUNTER
+    help: "Total number of classes loaded since JVM start"
+
+  # ---------- ZooKeeper specific ----------
+  - pattern: 'org.apache.ZooKeeperService<name0=(.+)><NumAliveConnections>'
+    name: zookeeper_connections_alive
+    labels:
+      server: "$1"
+    type: GAUGE
+    help: "Number of alive ZooKeeper client connections"
+
+  - pattern: 'org.apache.ZooKeeperService<name0=(.+)><OutstandingRequests>'
+    name: zookeeper_outstanding_requests
+    labels:
+      server: "$1"
+    type: GAUGE
+    help: "Number of queued requests"
+
+  - pattern: 'org.apache.ZooKeeperService<name0=(.+)><AvgRequestLatency>'
+    name: zookeeper_avg_latency_ms
+    labels:
+      server: "$1"
+    type: GAUGE
+    help: "Average request latency (ms)"
