@@ -23,7 +23,9 @@ services:
   # METRICS_APPLICATION to distinguish them in Grafana.
   # ─────────────────────────────────────────────────────────────
   service1:
-    build: ./currency-rate-provider
+    build:
+      context: .
+      dockerfile: currency-rate-provider/Dockerfile
     ports:
       - "8081:8080"       # Spring Actuator / Prometheus metrics
       - "9090:9090"       # gRPC
@@ -35,7 +37,9 @@ services:
         condition: service_healthy
 
   service2:
-    build: ./currency-rate-provider
+    build:
+      context: .
+      dockerfile: currency-rate-provider/Dockerfile
     ports:
       - "8082:8080"       # Spring Actuator / Prometheus metrics
       - "9092:9090"       # gRPC
@@ -50,7 +54,9 @@ services:
   # gRPC client — scheduled rate printer
   # ─────────────────────────────────────────────────────────────
   client:
-    build: ./rate-printer
+    build:
+      context: .
+      dockerfile: rate-printer/Dockerfile
     ports:
       - "8083:8081"       # Spring Actuator / Prometheus metrics
     environment:

@@ -33,3 +33,6 @@ build/
 
 ### Mac OS ###
 .DS_Store
+
+# Factor V release manifests (runtime artifacts, not source)
+releases/
