@@ -1,6 +1,6 @@
 # Currency Rate Service
 
-A microservices demo built with Spring Boot and gRPC, demonstrating service discovery (Zookeeper), consumer-driven contract testing (Pact), observability (Micrometer + Prometheus + Grafana), and the Twelve-Factor App principles **Build / Release / Run** (V) and **Dev/Prod Parity** (X).
+A microservices demo built with Spring Boot and gRPC, demonstrating service discovery (Zookeeper), consumer-driven contract testing (Pact), observability (Micrometer + Prometheus + Grafana), and the Twelve-Factor App principles.
 
 ## Architecture
 
@@ -76,6 +76,30 @@ Each Spring service has profile-specific property files:
 ./dev.sh        # builds images from source, starts all services with dev profile
 ./dev.sh down   # stop
 ```
+
+---
+
+## Logs (Twelve-Factor XI)
+
+Both services write all log events unbuffered to **stdout** — no file appenders, no log routing inside the app. The execution environment (Docker / the terminal) is responsible for capturing and forwarding the stream.
+
+Key configuration in `application.properties` (both modules):
+
+```properties
+logging.pattern.console=%d{yyyy-MM-dd'T'HH:mm:ss.SSSZ} %-5level [%thread] %logger{36} - %msg%n
+```
+
+Profile-specific log levels:
+- `application-dev.properties` — `logging.level.root=DEBUG`
+- `application-prod.properties` — `logging.level.root=INFO`
+
+The `rate-printer` logs every fetched rate via SLF4J:
+
+```
+2026-04-16T12:00:00.000+0000 INFO  [scheduling-1] o.e.rateprinter.RatePrinterService - Current rate: USDRUB = 91.43
+```
+
+In production the Docker daemon captures stdout from each container; operators can attach any log router (Fluentd, Logplex, etc.) without touching the application.
 
 ---
 

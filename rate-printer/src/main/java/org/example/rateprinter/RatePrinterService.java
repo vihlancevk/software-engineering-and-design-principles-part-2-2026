@@ -22,7 +22,7 @@ public class RatePrinterService {
     public void printRate() {
         try {
             RateResponse response = stub.getRate(RateRequest.newBuilder().build());
-            System.out.println("Current rate: " + response.getPair() + " = " + response.getRate());
+            log.info("Current rate: {} = {}", response.getPair(), response.getRate());
         } catch (Exception e) {
             log.error("Failed to fetch rate: {}", e.getMessage());
         }
