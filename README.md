@@ -1,6 +1,6 @@
 # Currency Rate Service
 
-A microservices demo built with Spring Boot and gRPC, demonstrating service discovery (Zookeeper), consumer-driven contract testing (Pact), and observability (Micrometer + Prometheus + Grafana).
+A microservices demo built with Spring Boot and gRPC, demonstrating service discovery (Zookeeper), consumer-driven contract testing (Pact), observability (Micrometer + Prometheus + Grafana), and the Twelve-Factor App principles.
 
 ## Architecture
 
@@ -54,39 +54,125 @@ message RateResponse {
 
 ## Requirements
 
-- Java 21+
-- Maven 3.9+
-- Docker & Docker Compose
+- Docker & Docker Compose (no local JDK or Maven needed — the build runs inside Docker)
 
-## Running
+## Dev/Prod Parity (Twelve-Factor X)
 
-### 1. Build JARs
+Backing services (ZooKeeper, Prometheus, Grafana, Pact Broker) are identical in every environment — no lightweight substitutes in development. The compose file layout enforces this:
+
+| File | Purpose |
+|------|---------|
+| `docker-compose.yml` | Shared config for all environments: infrastructure + app service ports, env vars, and dependencies. Never run alone. |
+| `docker-compose.dev.yml` | Development overlay: adds `build:` directives and activates `SPRING_PROFILES_ACTIVE=dev`. |
+| `releases/<id>/docker-compose.release.yml` | Production overlay: pins immutable image tags and activates `SPRING_PROFILES_ACTIVE=prod`. |
+
+Each Spring service has profile-specific property files:
+- `application-dev.properties` — `logging.level.root=DEBUG`
+- `application-prod.properties` — `logging.level.root=INFO`
+
+### Start the dev stack
 
 ```bash
-mvn package -DskipTests
+./dev.sh        # builds images from source, starts all services with dev profile
+./dev.sh down   # stop
 ```
 
-> `-DskipTests` also skips Pact publishing so no running broker is required for a plain build.
+---
 
-### 2. Start all services
+## Logs (Twelve-Factor XI)
+
+Both services write all log events unbuffered to **stdout** — no file appenders, no log routing inside the app. The execution environment (Docker / the terminal) is responsible for capturing and forwarding the stream.
+
+Key configuration in `application.properties` (both modules):
+
+```properties
+logging.pattern.console=%d{yyyy-MM-dd'T'HH:mm:ss.SSSZ} %-5level [%thread] %logger{36} - %msg%n
+```
+
+Profile-specific log levels:
+- `application-dev.properties` — `logging.level.root=DEBUG`
+- `application-prod.properties` — `logging.level.root=INFO`
+
+The `rate-printer` logs every fetched rate via SLF4J:
+
+```
+2026-04-16T12:00:00.000+0000 INFO  [scheduling-1] o.e.rateprinter.RatePrinterService - Current rate: USDRUB = 91.43
+```
+
+In production the Docker daemon captures stdout from each container; operators can attach any log router (Fluentd, Logplex, etc.) without touching the application.
+
+---
+
+## Build / Release / Run (Twelve-Factor V)
+
+The project enforces a strict three-stage pipeline. Each stage has a single responsibility and cannot bleed into the next.
+
+```
+  ./build.sh          ./release.sh <build-id>       ./run.sh <release-id>
+┌───────────┐        ┌──────────────────────┐       ┌──────────────────┐
+│   BUILD   │───────►│       RELEASE        │──────►│       RUN        │
+│           │        │                      │       │                  │
+│ Maven     │        │ build + config =     │       │ docker compose   │
+│ inside    │        │ immutable manifest   │       │ from pinned      │
+│ Docker    │        │ releases/<id>/       │       │ image tags only  │
+│           │        │   manifest.json      │       │                  │
+│ tags:     │        │   docker-compose     │       │ no build step,   │
+│ <svc>:    │        │   .release.yml       │       │ no Maven,        │
+│ build-    │        │                      │       │ no toolchain     │
+│ <git-sha> │        │ append-only ledger   │       │                  │
+└───────────┘        └──────────────────────┘       └──────────────────┘
+```
+
+### Stage 1 — Build
 
 ```bash
-docker compose up --build
+BUILD_ID=$(./build.sh)
 ```
 
-| Service | URL | Description |
-|---------|-----|-------------|
-| service1 (provider) | http://localhost:8080/actuator | gRPC server instance 1 |
-| service2 (provider) | http://localhost:8082/actuator | gRPC server instance 2 |
-| client (rate-printer) | http://localhost:8081/actuator | gRPC client |
-| Zookeeper | localhost:2181 | service discovery |
-| Prometheus | http://localhost:9091 | metrics storage |
-| Grafana | http://localhost:3000 | dashboards (admin / admin) |
-| Pact Broker | http://localhost:9292 | contract storage |
+`build.sh` triggers a multi-stage Docker build for each service. Maven runs **inside the Docker build stage** — no local JDK or Maven is required on the host. The resulting images are tagged `<service>:build-<git-sha>` and stored in the local Docker daemon.
 
-> service1 and service2 both register as `currency-rate-provider` in Zookeeper so the client discovers both automatically and load-balances between them.
+The Dockerfiles have two stages:
+- **`build`** — JDK + Maven; compiles sources and produces a fat JAR
+- **`run`** — JRE only; copies the JAR from the build stage; no toolchain survives into the runtime image
 
-### 3. Running services locally (without Docker)
+### Stage 2 — Release
+
+```bash
+RELEASE_ID=$(./release.sh "$BUILD_ID")
+```
+
+`release.sh` verifies the build images exist, then creates an immutable release directory:
+
+```
+releases/
+└── v20260416-143022/
+    ├── manifest.json              # build ID, git SHA, timestamp — never edited
+    └── docker-compose.release.yml # pins image tags, activates prod Spring profile
+```
+
+Releases are an **append-only ledger**: once created, a release directory is never modified. Any config change requires a new `./release.sh` invocation, which produces a new timestamped entry.
+
+### Stage 3 — Run
+
+```bash
+./run.sh "$RELEASE_ID"       # start a specific release
+./run.sh latest              # start the most recently created release
+./run.sh "$RELEASE_ID" down  # stop
+```
+
+`run.sh` merges `docker-compose.yml` with the release overlay. The overlay pins exact image tags — Docker Compose cannot trigger a rebuild at runtime. The run stage has no moving parts beyond `docker compose up`.
+
+#### Roll back to any previous release
+
+```bash
+./run.sh v20260415-120000
+```
+
+All past release directories are preserved, so rolling back is instant — just point `run.sh` at an earlier entry.
+
+---
+
+### Running services locally (without Docker)
 
 **Start infrastructure only:**
 ```bash
@@ -95,15 +181,27 @@ docker compose up -d zookeeper prometheus grafana
 
 **Start the provider:**
 ```bash
-cd currency-rate-provider
-mvn spring-boot:run
+cd currency-rate-provider && mvn spring-boot:run
 ```
 
 **Start the consumer:**
 ```bash
-cd rate-printer
-mvn spring-boot:run
+cd rate-printer && mvn spring-boot:run
 ```
+
+### Service URLs
+
+| Service | URL | Description |
+|---------|-----|-------------|
+| service1 (provider) | http://localhost:8081/actuator | gRPC server instance 1 |
+| service2 (provider) | http://localhost:8082/actuator | gRPC server instance 2 |
+| client (rate-printer) | http://localhost:8083/actuator | gRPC client |
+| Zookeeper | localhost:2181 | service discovery |
+| Prometheus | http://localhost:9091 | metrics storage |
+| Grafana | http://localhost:3000 | dashboards (admin / admin) |
+| Pact Broker | http://localhost:9292 | contract storage |
+
+> service1 and service2 both register as `currency-rate-provider` in Zookeeper so the client discovers both automatically and load-balances between them.
 
 ## Observability
 

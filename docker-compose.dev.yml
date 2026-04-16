@@ -1,0 +1,22 @@
+# docker-compose.dev.yml — development overlay
+# Adds build directives and the dev Spring profile on top of docker-compose.yml.
+# Usage: ./dev.sh  (or: docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build)
+
+x-provider-build: &provider-build
+  build:
+    context: .
+    dockerfile: currency-rate-provider/Dockerfile
+  environment:
+    SPRING_PROFILES_ACTIVE: dev
+
+services:
+  service1:
+    <<: *provider-build
+  service2:
+    <<: *provider-build
+  client:
+    build:
+      context: .
+      dockerfile: rate-printer/Dockerfile
+    environment:
+      SPRING_PROFILES_ACTIVE: dev

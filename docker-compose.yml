@@ -1,13 +1,17 @@
+# docker-compose.yml — Factor X: Dev/Prod Parity
+#
+# Shared config for all environments. Never run alone — always compose with
+# an environment-specific overlay that supplies image: or build: for app services:
+#   Development : -f docker-compose.yml -f docker-compose.dev.yml        (./dev.sh)
+#   Production  : -f docker-compose.yml -f releases/<id>/docker-compose.release.yml  (./run.sh)
+
 services:
-  # ─────────────────────────────────────────────────────────────
-  # Service discovery
-  # ─────────────────────────────────────────────────────────────
   zookeeper:
     build:
       context: ./monitoring/zookeeper
     ports:
       - "2181:2181"
-      - "7070:7070"       # JMX Prometheus exporter
+      - "7070:7070"
     environment:
       ZOO_4LW_COMMANDS_WHITELIST: mntr,conf,ruok
     healthcheck:
@@ -16,17 +20,14 @@ services:
       timeout: 5s
       retries: 5
 
-  # ─────────────────────────────────────────────────────────────
-  # gRPC currency-rate server — two instances (service1, service2)
-  # Both register as "currency-rate-provider" in ZooKeeper so the
-  # client discovers them via round-robin. Metrics are tagged with
-  # METRICS_APPLICATION to distinguish them in Grafana.
-  # ─────────────────────────────────────────────────────────────
+  # ─── App services — shared runtime config ───────────────────
+  # image: / build: is supplied by the environment overlay.
+  # Both provider instances register as "currency-rate-provider" in ZooKeeper
+  # so the client discovers them via round-robin.
   service1:
-    build: ./currency-rate-provider
     ports:
-      - "8081:8080"       # Spring Actuator / Prometheus metrics
-      - "9090:9090"       # gRPC
+      - "8081:8080"
+      - "9090:9090"
     environment:
       ZOOKEEPER_HOST: zookeeper
       METRICS_APPLICATION: service1
@@ -35,10 +36,9 @@ services:
         condition: service_healthy
 
   service2:
-    build: ./currency-rate-provider
     ports:
-      - "8082:8080"       # Spring Actuator / Prometheus metrics
-      - "9092:9090"       # gRPC
+      - "8082:8080"
+      - "9092:9090"
     environment:
       ZOOKEEPER_HOST: zookeeper
       METRICS_APPLICATION: service2
@@ -46,13 +46,9 @@ services:
       zookeeper:
         condition: service_healthy
 
-  # ─────────────────────────────────────────────────────────────
-  # gRPC client — scheduled rate printer
-  # ─────────────────────────────────────────────────────────────
   client:
-    build: ./rate-printer
     ports:
-      - "8083:8081"       # Spring Actuator / Prometheus metrics
+      - "8083:8081"
     environment:
       ZOOKEEPER_HOST: zookeeper
       METRICS_APPLICATION: client
@@ -64,13 +60,10 @@ services:
       service2:
         condition: service_started
 
-  # ─────────────────────────────────────────────────────────────
-  # Metrics collection
-  # ─────────────────────────────────────────────────────────────
   prometheus:
     image: prom/prometheus:latest
     ports:
-      - "9091:9090"       # UI at http://localhost:9091
+      - "9091:9090"
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     command:
@@ -83,13 +76,10 @@ services:
       - service2
       - client
 
-  # ─────────────────────────────────────────────────────────────
-  # Dashboards
-  # ─────────────────────────────────────────────────────────────
   grafana:
     image: grafana/grafana:latest
     ports:
-      - "3000:3000"       # UI at http://localhost:3000  (admin/admin)
+      - "3000:3000"
     environment:
       GF_SECURITY_ADMIN_PASSWORD: admin
       GF_USERS_ALLOW_SIGN_UP: "false"
@@ -100,9 +90,6 @@ services:
     depends_on:
       - prometheus
 
-  # ─────────────────────────────────────────────────────────────
-  # Contract testing infrastructure (unchanged)
-  # ─────────────────────────────────────────────────────────────
   pact-broker-db:
     image: postgres:16-alpine
     environment:
