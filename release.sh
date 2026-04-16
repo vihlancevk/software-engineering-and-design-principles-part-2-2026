@@ -51,16 +51,20 @@ EOF
 cat > "${RELEASE_DIR}/docker-compose.release.yml" <<EOF
 # Release ${RELEASE_ID} — built from ${BUILD_ID}
 # This file is immutable. Do not edit it; create a new release instead.
+# Overlay on docker-compose.yml: pins images and activates the prod Spring profile.
 services:
   service1:
     image: currency-rate-provider:build-${BUILD_ID}
-    build: !reset null
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
   service2:
     image: currency-rate-provider:build-${BUILD_ID}
-    build: !reset null
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
   client:
     image: rate-printer:build-${BUILD_ID}
-    build: !reset null
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
 EOF
 
 echo "[release] Created release ${RELEASE_ID} in ${RELEASE_DIR}/" >&2

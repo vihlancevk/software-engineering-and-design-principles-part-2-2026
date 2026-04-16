@@ -1,6 +1,6 @@
 # Currency Rate Service
 
-A microservices demo built with Spring Boot and gRPC, demonstrating service discovery (Zookeeper), consumer-driven contract testing (Pact), observability (Micrometer + Prometheus + Grafana), and the Twelve-Factor App **Build / Release / Run** separation.
+A microservices demo built with Spring Boot and gRPC, demonstrating service discovery (Zookeeper), consumer-driven contract testing (Pact), observability (Micrometer + Prometheus + Grafana), and the Twelve-Factor App principles **Build / Release / Run** (V) and **Dev/Prod Parity** (X).
 
 ## Architecture
 
@@ -56,6 +56,29 @@ message RateResponse {
 
 - Docker & Docker Compose (no local JDK or Maven needed — the build runs inside Docker)
 
+## Dev/Prod Parity (Twelve-Factor X)
+
+Backing services (ZooKeeper, Prometheus, Grafana, Pact Broker) are identical in every environment — no lightweight substitutes in development. The compose file layout enforces this:
+
+| File | Purpose |
+|------|---------|
+| `docker-compose.yml` | Shared config for all environments: infrastructure + app service ports, env vars, and dependencies. Never run alone. |
+| `docker-compose.dev.yml` | Development overlay: adds `build:` directives and activates `SPRING_PROFILES_ACTIVE=dev`. |
+| `releases/<id>/docker-compose.release.yml` | Production overlay: pins immutable image tags and activates `SPRING_PROFILES_ACTIVE=prod`. |
+
+Each Spring service has profile-specific property files:
+- `application-dev.properties` — `logging.level.root=DEBUG`
+- `application-prod.properties` — `logging.level.root=INFO`
+
+### Start the dev stack
+
+```bash
+./dev.sh        # builds images from source, starts all services with dev profile
+./dev.sh down   # stop
+```
+
+---
+
 ## Build / Release / Run (Twelve-Factor V)
 
 The project enforces a strict three-stage pipeline. Each stage has a single responsibility and cannot bleed into the next.
@@ -100,7 +123,7 @@ RELEASE_ID=$(./release.sh "$BUILD_ID")
 releases/
 └── v20260416-143022/
     ├── manifest.json              # build ID, git SHA, timestamp — never edited
-    └── docker-compose.release.yml # overrides image tags; resets build: to null
+    └── docker-compose.release.yml # pins image tags, activates prod Spring profile
 ```
 
 Releases are an **append-only ledger**: once created, a release directory is never modified. Any config change requires a new `./release.sh` invocation, which produces a new timestamped entry.
@@ -108,12 +131,12 @@ Releases are an **append-only ledger**: once created, a release directory is nev
 ### Stage 3 — Run
 
 ```bash
-./run.sh "$RELEASE_ID"   # start a specific release
-./run.sh latest          # start the most recently created release
+./run.sh "$RELEASE_ID"       # start a specific release
+./run.sh latest              # start the most recently created release
 ./run.sh "$RELEASE_ID" down  # stop
 ```
 
-`run.sh` merges the base `docker-compose.yml` with the release override. Because the override pins exact image tags and resets all `build:` directives to `null`, Docker Compose **cannot trigger a rebuild at runtime**. The run stage has no moving parts beyond `docker compose up`.
+`run.sh` merges `docker-compose.yml` with the release overlay. The overlay pins exact image tags — Docker Compose cannot trigger a rebuild at runtime. The run stage has no moving parts beyond `docker compose up`.
 
 #### Roll back to any previous release
 
